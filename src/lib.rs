@@ -1,8 +1,11 @@
 
 use std::alloc::Layout;
 use std::collections::HashMap;
+use std::collections::LinkedList;
+use std::ffi::c_void;
 use std::mem::ManuallyDrop;
 use std::mem::size_of;
+use std::pin::Pin;
 use std::sync::Mutex;
 
 use flecs::EntityId;
@@ -12,7 +15,10 @@ use flecs::Entity as FlEntity;
 use flecs::TermBuilder;
 
 
+use godot::engine;
+use godot::engine::GdScript;
 use godot::engine::Script;
+use godot::obj::EngineEnum;
 use godot::prelude::*;
 use godot::engine::Node;
 use godot::engine::NodeVirtual;
@@ -100,15 +106,196 @@ const TYPE_SIZES:&'static [usize] = &[
     /* PACKED_VECTOR2_ARRAY */ size_of::<Array<()>>(),
     /* PACKED_VECTOR3_ARRAY */ size_of::<Array<()>>(),
     /* PACKED_COLOR_ARRAY */ size_of::<Array<()>>(),
-    /* MAX */ 38,
+    /* MAX */ 0,
 ];
-
-static mut static_query_ids:Vec<&'static [u64]> = vec![];
 
 struct SuperECGDS; #[gdextension] unsafe impl ExtensionLibrary for SuperECGDS {}
 
+#[derive(GodotClass)]
+#[class(base=RefCounted)]
+struct _BaseGEComponent {
+    #[base] base: Base<RefCounted>,
+    /// The Flecs component ID for this component.
+    flecs_id: EntityId,
+    data: *mut [u8],
+    world: *const _BaseGEWorld,
+    mutable: bool,
+}
+#[godot_api]
+impl _BaseGEComponent {
+    #[func]
+    fn _component_get(&self, property:StringName) -> Variant {
+        let world = unsafe {&*self.world};
+        let name = world.name_from_flex_id(self.flecs_id);
+        let Some(property_data) = world.script_components
+            .get(&name).unwrap().parameters.get(&property) else {
+                return Variant::nil();
+            };
+        
+        fn get_param<T: ToVariant + Copy>(
+            data:*mut [u8],
+            property_meta: &ScriptComponetProperty
+        ) -> Variant {
+            unsafe {
+                let param:*mut u8 = &mut (*data)[property_meta.offset];
+                let value = *param.cast::<T>();
+                return Variant::from(value);
+            }
+        }
+        
+        match property_data.type_id {
+            TYPE_BOOL => {
+                return get_param::<bool>(self.data, property_data);
+            }
+            TYPE_INT => {
+                return get_param::<i32>(self.data, property_data);
+            }
+            TYPE_FLOAT => {
+                return get_param::<f32>(self.data, property_data);
+            }
+            _ => {
+                todo!()
+            }
+        }
+    }
+
+    #[func]
+    fn _component_set(&mut self, property:StringName, value:Variant) -> bool {
+        assert!(self.mutable);
+        let world = unsafe {&*self.world};
+        let name = world.name_from_flex_id(self.flecs_id);
+        let Some(property_meta) = world.script_components
+            .get(&name).unwrap().parameters.get(&property) else {
+                return false;
+            };
+        
+        fn set_param<T: FromVariant>(
+            data:*mut [u8],
+            value: Variant,
+            property_meta: &ScriptComponetProperty,
+        ) {
+            unsafe {
+                let param:*mut u8 = &mut (*data)[property_meta.offset];
+                *param.cast::<T>() = value.to::<T>();
+            }
+        }
+        
+        match property_meta.type_id {
+            TYPE_BOOL => {
+                set_param::<bool>(self.data, value, property_meta);
+            }
+            TYPE_INT => {
+                set_param::<i32>(self.data, value, property_meta);
+            }
+            TYPE_FLOAT => {
+                set_param::<f32>(self.data, value, property_meta);
+            } _ => {
+                todo!()
+            }
+        }
+        return true;
+    }
+
+    #[func]
+    fn _component_get_property_list(&self) -> Array<Dictionary> {
+        return array![];
+    }
+}
+
+#[derive(GodotClass)]
+#[class(base=RefCounted)]
+struct _BaseGEComponentAccess {
+    #[base] base: Base<RefCounted>,
+    /// The Flecs component ID for this component.
+    flecs_id: EntityId,
+    data: *mut [u8],
+    world: *const _BaseGEWorld,
+    mutable: bool,
+}
+#[godot_api]
+impl _BaseGEComponentAccess {
+    #[func]
+    fn _component_get(&self, property:StringName) -> Variant {
+        let world = unsafe {&*self.world};
+        let name = world.name_from_flex_id(self.flecs_id);
+        let Some(property_data) = world.script_components
+            .get(&name).unwrap().parameters.get(&property) else {
+                return Variant::nil();
+            };
+        
+        fn get_param<T: ToVariant + Copy>(
+            data:*mut [u8],
+            property_meta: &ScriptComponetProperty
+        ) -> Variant {
+            unsafe {
+                let param:*mut u8 = &mut (*data)[property_meta.offset];
+                let value = *param.cast::<T>();
+                return Variant::from(value);
+            }
+        }
+        
+        match property_data.type_id {
+            TYPE_BOOL => {
+                return get_param::<bool>(self.data, property_data);
+            }
+            TYPE_INT => {
+                return get_param::<i32>(self.data, property_data);
+            }
+            TYPE_FLOAT => {
+                return get_param::<f32>(self.data, property_data);
+            }
+            _ => {
+                todo!()
+            }
+        }
+    }
+
+    #[func]
+    fn _component_set(&mut self, property:StringName, value:Variant) -> bool {
+        assert!(self.mutable);
+        let world = unsafe {&*self.world};
+        let name = world.name_from_flex_id(self.flecs_id);
+        let Some(property_meta) = world.script_components
+            .get(&name).unwrap().parameters.get(&property) else {
+                return false;
+            };
+        
+        fn set_param<T: FromVariant>(
+            data:*mut [u8],
+            value: Variant,
+            property_meta: &ScriptComponetProperty,
+        ) {
+            unsafe {
+                let param:*mut u8 = &mut (*data)[property_meta.offset];
+                *param.cast::<T>() = value.to::<T>();
+            }
+        }
+        
+        match property_meta.type_id {
+            TYPE_BOOL => {
+                set_param::<bool>(self.data, value, property_meta);
+            }
+            TYPE_INT => {
+                set_param::<i32>(self.data, value, property_meta);
+            }
+            TYPE_FLOAT => {
+                set_param::<f32>(self.data, value, property_meta);
+            } _ => {
+                todo!()
+            }
+        }
+        return true;
+    }
+
+    #[func]
+    fn _component_get_property_list(&self) -> Array<Dictionary> {
+        return array![];
+    }
+}
+
+
 #[derive(Debug, Default, Clone)]
-struct ScriptComponet {
+struct ScriptComponetMetadata {
     name: StringName,
     parameters: HashMap<StringName, ScriptComponetProperty>,
     flecs_id: EntityId,
@@ -118,24 +305,73 @@ struct ScriptComponet {
 struct ScriptComponetProperty {
     name: StringName,
     type_id: i32,
+    offset: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ScriptSystemContext {
+    callable: Callable,
+    terms: Vec<(Gd<Script>, bool)>,
+    world: *const _BaseGEWorld,
+}
+
+#[derive(GodotClass)]
+#[class(base=RefCounted)]
+struct _BaseGESystemBuilder {
+    callable: Callable,
+    terms: Vec<(Gd<Script>, bool)>,
+    #[export] _world: Gd<_BaseGEWorld>,
+}
+#[godot_api]
+impl _BaseGESystemBuilder {
+    #[func]
+    fn _new_for_world(
+        callable: Callable,
+        world: Gd<_BaseGEWorld>,
+    ) -> Gd<_BaseGESystemBuilder> {
+        Gd::new(_BaseGESystemBuilder {
+            callable,
+            terms: vec![],
+            _world: world,
+        })
+    }
+
+    #[func]
+    fn _term(&mut self, component: Gd<Script>) {
+        self.terms.push((component, false));
+    }
+
+    #[func]
+    fn _mut_term(& mut self, component: Gd<Script>) {
+        self.terms.push((component, true));
+    }
+
+    #[func]
+    fn _build(system: Gd<_BaseGESystemBuilder>, mut world: Gd<_BaseGEWorld>) {
+        let mut world = world.bind_mut();
+        world._new_system_from_builder(&*system.bind());
+    }
 }
 
 #[derive(GodotClass)]
 #[class(base=Node)]
-struct ECSWorld {
+struct _BaseGEWorld {
     #[base] node: Base<Node>,
     world: FlWorld,
-    /// Maps component scripts to their component names.
+    /// Maps component scripts to their component names. Keys are the
+    /// `[InstanceId]`s of the `[Script]`s.
     component_names: HashMap<InstanceId, StringName>,
     /// 
-    script_components: HashMap<StringName, ScriptComponet>,
+    script_components: HashMap<StringName, ScriptComponetMetadata>,
+    component_ids_to_names: HashMap<EntityId, StringName>,
+    system_contexts: LinkedList<Pin<Box<ScriptSystemContext>>>,
 }
 #[godot_api]
-impl ECSWorld {
+impl _BaseGEWorld {
     #[func]
     fn _world_process(&mut self, delta:f32) {
         godot_print!("_world_process {delta}");
-        let result = self.world.progress(delta);
+        self.world.progress(delta);
     }
 
     #[func]
@@ -148,6 +384,7 @@ impl ECSWorld {
             .get_script_property_list();
 
         let mut component_properties = HashMap::default();
+        let mut offset = 0;
         let mut i = 0;
         while i != script_properties.len() {
             let property = script_properties.get(i);
@@ -170,20 +407,23 @@ impl ECSWorld {
                 ScriptComponetProperty {
                     name: property_name,
                     type_id: property_type,
+                    offset,
                 },
             );
 
+            offset += TYPE_SIZES[property_type as usize];
             i += 1;
         }
 
-        let mut script_component = ScriptComponet {
+        let mut script_component = ScriptComponetMetadata {
             name: component_name.clone(),
             parameters: component_properties,
             flecs_id: 0,
         };
         let layout = Self::layout_from_script_component(&script_component);
 
-        self.component_names.insert(component.instance_id(), component_name.clone());
+        self.component_names
+            .insert(component.instance_id(), component_name.clone());
 
         script_component.flecs_id = unsafe {
             // This unsafe block converts component_name into &'static str to
@@ -196,6 +436,10 @@ impl ECSWorld {
             let flecs_id = self.world.component_dynamic(str, layout);
             flecs_id
         };
+        self.component_ids_to_names.insert(
+            script_component.flecs_id,
+            component_name.clone(),
+        );
         self.script_components.insert(
             component_name.clone(),
             script_component,
@@ -203,59 +447,103 @@ impl ECSWorld {
         godot_print!("Registered component: {:?}", component_name);
     }
     
-    #[func]
-    fn _register_system(
-        &mut self,
-        system: Callable,
-        query: Array<Gd<Script>>,
-    ) {
-        let mut query_ids = vec![];
-        for i in 0..query.len() {
-            let script = query.get(i);
+    fn _new_system_from_builder(&mut self, builder: &_BaseGESystemBuilder) {
+        let terms = &builder.terms;
+
+        let mut term_ids = vec![];
+        for i in 0..terms.len() {
+            let (script, mutable) = terms.get(i).unwrap();
             let name = self.component_names
                 .get(&script.instance_id())
                 .unwrap();
             let script_component = self.script_components
                 .get(name)
                 .unwrap();
-            query_ids.push(script_component.flecs_id);
+            term_ids.push((script_component.flecs_id, mutable));
         }
-        let mut sys = self.world.system().context(system);
 
-        for id in query_ids.iter() {
-            sys = sys.term_dynamic(*id);
+        let world_ptr:*const _BaseGEWorld = self;
+        self.system_contexts.push_back(Pin::new(Box::new(
+            ScriptSystemContext {
+                callable: Callable::from_object_method(
+                    builder.callable.object().unwrap().clone(),
+                    builder.callable.method_name().unwrap().clone(),
+                ),
+                terms: terms.iter()
+                    .map(|x| { (x.0.clone(), x.1) })
+                    .collect(),
+                world: world_ptr,
+            }
+        )));
+        let context_ptr:*mut Pin<Box<ScriptSystemContext>> = self.system_contexts
+            .back_mut()
+            .unwrap();
+        let mut sys = self.world.system()
+            .context_ptr(context_ptr.cast::<c_void>());
+
+        for id in term_ids.iter() {
+            sys = sys.term_dynamic(id.0);
         }
 
         sys.iter(|iter| {
-            let callable = unsafe {iter.get_context::<Callable>()};
-            let fields = iter.raw_fields();
+            let context = unsafe {
+                iter.get_context::<Pin<Box<ScriptSystemContext>>>()
+            };
+            let world = context.world;
+            let terms = &context.terms;
+            let callable = &context.callable;
+
             let mut columns:Vec<flecs::ColumnDynamic> = vec![];
             for i in 1..=(iter.field_count()) as i32 {
                 let column = iter.field_dynamic(i);
                 columns.push(column);
             }
-            godot_print!("5 {}", columns.len());
 
             for i in 0..(iter.count() as usize) {
-                godot_print!("6, {} {}", i, columns.len());
-                let components:Vec<&[u8]> = columns
-                    .iter()
-                    .map(|c| {
-                        c.get(i)
-                    })
-                    .collect();
-                godot_print!("system: {components:?}");
-                let args: Array<Variant> = array![];
-                godot_print!("callable {callable}");
-                godot_print!("is_valid {}", callable.is_valid());
+                let column = columns.get_mut(i).unwrap();
+                // Create components arguments
+                let mut args: Array<Variant> = array![];
+                args.resize(iter.field_count() as usize);
+                let fields = iter.raw_fields();
+                for i in 0..iter.field_count() as usize {
+                    let (term_script, term_mutable)
+                        = terms[i].clone();
+                    let data:*mut [u8] = if term_mutable {
+                        column.get_mut(i)
+                    } else {
+                        let data_ptr:*const[u8] = column.get(i);
+                        unsafe {
+                            // `[_BaseECSComponent]` makes sure this reference
+                            // is not mutated.
+                            data_ptr.cast_mut().as_mut().unwrap()
+                        }
+                    };
+
+                    if let Some(term_script) = term_script.try_cast::<GdScript>() {
+                        let mut compopnent = Gd::<_BaseGEComponentAccess>::with_base(|base| {
+                            _BaseGEComponentAccess {
+                                base,
+                                flecs_id: fields.get(i).unwrap().id,
+                                data,
+                                world,
+                                mutable: term_mutable,
+                            }
+                        });
+                        compopnent.set_script(term_script.to_variant());
+                        args.set(i, compopnent.to_variant());
+                    } else {
+                        panic!();
+                    }
+                }
+                
                 callable.callv(args);
             }
         });
     }
 
+
     #[func]
     fn _new_entity(&mut self, with_components:Array<Gd<Script>>) {
-        unsafe {godot_print!("static query_ids {:?}", static_query_ids)};
         let mut entity = self.world.entity();
         let mut i = 0;
         while i != with_components.len() {
@@ -271,11 +559,17 @@ impl ECSWorld {
         }
     }
 
+    fn name_from_flex_id(&self, flecs_component_id: EntityId) -> &StringName {
+        let names = &self.component_ids_to_names;
+        names.get(&flecs_component_id)
+            .unwrap()
+    }
+
     fn script_is_component(script: Gd<Script>) -> bool {
         todo!()
     }
 
-    fn layout_from_script_component(component: &ScriptComponet) -> Layout {
+    fn layout_from_script_component(component: &ScriptComponetMetadata) -> Layout {
         let mut size = 0;
         for (_name, property) in &component.parameters {
             size += TYPE_SIZES[property.type_id as usize];
@@ -284,7 +578,7 @@ impl ECSWorld {
     }
 }
 #[godot_api]
-impl NodeVirtual for ECSWorld {
+impl NodeVirtual for _BaseGEWorld {
     fn init(node: Base<Node>) -> Self {
         let world = FlWorld::new();
         unsafe {ecs_set_threads(world.raw(), 1)};
@@ -293,6 +587,8 @@ impl NodeVirtual for ECSWorld {
             world: world,
             component_names: HashMap::default(),
             script_components: HashMap::default(),
+            component_ids_to_names: HashMap::default(),
+            system_contexts: LinkedList::default(),
         }
     }
 
@@ -313,7 +609,7 @@ impl Entity {
         let world = Engine::singleton()
             .get_singleton(StringName::from("ECSWorld"))
             .unwrap()
-            .cast::<ECSWorld>();
+            .cast::<_BaseGEWorld>();
         let script = world.get_script().to::<Gd<Script>>();
         // script.get_class()
     }
